@@ -1,38 +1,39 @@
-# Roadmap
+# 🔮 Apollo Kotlin Roadmap
 
-This document is meant to give the community some idea of where we're going with Apollo Android in the short and longer term. 
+**Last updated: 2024-11-14**
 
-Please open issues or comment/upvote the existing ones for items you'd like to see added here. Feedback is very welcome! We'd love to learn more about how you're using Apollo Android and what you'd like to see in the future.
+For up to date release notes, refer to the project [Changelog](https://github.com/apollographql/apollo-kotlin/blob/main/CHANGELOG.md).
 
-This document was last updated on October 20th, 2020. For a more detailed and up-to-date view, you can check the project's [milestones](https://github.com/apollographql/apollo-android/milestones?direction=asc&sort=title&state=open).
+> **Please note:** This is an approximation of **larger effort** work planned for the next 6 - 12 months. It does not cover all new functionality that will be added, and nothing here is set in stone. Also note that each of these releases, and several patch releases in-between, will include bug fixes (based on issue triaging) and community submitted PR's.
 
-## `main` branch (versions 2.x)
+## ✋ Community feedback & prioritization
 
-`main` is the stable branch. Non breaking improvements and bugfixes land here. This branch is actively maintained and battle-tested. Things that are coming in 2.4.2:
+- Please report feature requests or bugs as a new [issue](https://github.com/apollographql/apollo-kotlin/issues/new/choose).
+- If you already see an issue that interests you please add a 👍 or a comment so we can measure community interest.
 
-* SDL type extensions ([#2656](https://github.com/apollographql/apollo-android/issues/2656))
-* Custom Fragments package names ([#2667](https://github.com/apollographql/apollo-android/issues/2667))
-* HTTP cache key bypass ([#2659](https://github.com/apollographql/apollo-android/issues/2659))
-* Bugfixes
+---
 
-While working on 2.x, we found a few limitations that could not be fixed without major breaking changes so we started developping `dev-3.x` in parallel. Once `dev-3.x` reaches alpha, it will be merged into `main`
+## [Cache improvements](https://github.com/apollographql/apollo-kotlin/issues/2331)
 
-## `dev-3x` branch (versions 3.x)
+The declarative cache makes working with the cache and defining unique object ids easier.  We also want to include helpers to handle with common cases like pagination, garbage collection and eviction. Follow [#2331](https://github.com/apollographql/apollo-kotlin/issues/2331) for a high level overview.  Cache control is now available ([doc](https://apollographql.github.io/apollo-kotlin-normalized-cache-incubating/cache-control.html)) 🎉.  The current focus is now on implementing [garbage collection](https://github.com/apollographql/apollo-kotlin/issues/3805).  
+Cache control is available to try now but may be slower than the current cache due to the extra metadata stored.  We're planning to improve this after garbage collection is feature complete. 
 
-`dev-3x` is the branch for the next major version of Apollo Android where new developments happen. Apollo 3.0.0 will be:
+## [Testing utilities](https://github.com/apollographql/apollo-kotlin/issues/6076)
 
-* **Kotlin-first**, generating Kotlin models by default and exposing coroutines APIs
-* **Modular**, making it easy to change the transport, the cache implementation or using the generated models directly. 
-* **Fast**, with optimized json parsing speed to make your UIs even more reactive
+The community has given some consistent feedback around testing and data builders in particular.  We are in the process of organizing this feedback into actionable workstreams and will update this section of the Roadmap and the relevant Issues as details emerge.
 
-The current target is to get a `3.0.0-alpha1` by the end of 2020. The full list of issues can be found in the [milestones](https://github.com/apollographql/apollo-android/milestones?direction=asc&sort=title&state=open). The most important ones are:
+## Jetpack Compose extensions
 
-- **Fragments as interfaces** ([#1854](https://github.com/apollographql/apollo-android/issues/1854)): As of today, GraphQL fragments are generated as separate classes. While this works well, accessing fragments is verbose: hero.fragments.humanDetails?.homePlanet. Having fragments generated as interfaces will make the code more concise: `hero.asHuman()?.homePlanet`, even `hero.homePlanet` if the type condition is always verified. Note that due to the massively complex nature of the changes, the Java codegen has been disabled in `dev-3.x` and will have to be mostly rewritten if needed.
+_This is currently available as an experimental feature.  We will release a stable version after getting sufficient user feedback_
 
-- **Streaming Json parser** ([#2523](https://github.com/apollographql/apollo-android/issues/2523)): Benchmarks have shown that parsing Json with Apollo Android is slower than with [Moshi](https://github.com/square/moshi). Part of the explanation is that, as of now, we parse in two steps. First from the json to a map and then from the map to the generated models. This is required with the current fragment's implementation. Reading fragment requires being able to "rewind" the stream to read fields that are defined multiple times. With fragments as interfaces, we could switch to a streaming parser and get some nice performance improvements.
+[Jetpack Compose](https://developer.android.com/jetpack/compose) is a declarative UI framework for building Android UIs written in Kotlin.  We are experimenting with a few different approaches for supporting Compose in the Apollo Kotlin library.  Our 3.8.0 release introduced an experimental API for use with Compose, please do try it out and give us feedback!
 
-- **Kotlin multiplatform normalized cache** ([#2636](https://github.com/apollographql/apollo-android/issues/2636)): The Kotlin multiplatform runtime is working but is still missing features compared to the JVM runtime. The normalized cache is one of them.
+## Future feature releases
 
-- **Improved normalized cache APIs** ([#2331](https://github.com/apollographql/apollo-android/issues/2331)): It's been historically difficult to handle cases like pagination with the current normalized cache. We have also had a lot of questions around the usage of `CacheKeyResolver` and data expiration, garbage collection. Making the normalized cache multiplatform is a good opportunity to improve these APIs. 
+- UNKNOWN__ sealed hierarchy.
+- Project isolation compatibility for the Gradle plugin (might work already but at least requires some tests).
+- Stable Jetpack Compose extensions - user feedback is critical here, please do try out the experimental extensions and let us know what's working and what could be improved!
 
-- **General API grooming**: As part of the major release, remove some deprecated APIs and streamline some complex APIs such as the custom scalars ([PR #2486](https://github.com/apollographql/apollo-android/issues/2486)) and the Android variants handling in the Gradle plugin ([PR #2668](https://github.com/apollographql/apollo-android/pull/2668)).     
+## Version 3 releases
+
+All active feature development is now being done for `4.x` releases on the `main` branch.  Critical bugfixes and security patches will land in version 3 via `3.8.x` on the `release-3.x` branch.

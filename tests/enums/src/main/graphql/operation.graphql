@@ -1,0 +1,12 @@
+query GetEnums {
+  direction
+  gravity
+  foo
+  fooSealed
+  fooClass
+  fooEnum
+}
+
+query GetColor {
+  color
+}

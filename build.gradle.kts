@@ -1,298 +1,15 @@
-import okhttp3.Credentials.basic
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.gradle.api.tasks.testing.logging.TestExceptionFormat
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import JapiCmp.configureJapiCmp
+import kotlinx.validation.ExperimentalBCVApi
+import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeHostTest
 
-buildscript {
-  project.apply {
-    from(rootProject.file("gradle/dependencies.gradle"))
-  }
+plugins {
+  id("build.logic") apply false
 }
 
-ApiCompatibility.configure(rootProject)
+apply(plugin = "com.github.ben-manes.versions")
+apply(plugin = "org.jetbrains.kotlinx.binary-compatibility-validator")
 
-subprojects {
-  apply {
-    from(rootProject.file("gradle/dependencies.gradle"))
-  }
-
-  plugins.withType(com.android.build.gradle.BasePlugin::class.java) {
-    (project.extensions.getByName("android") as com.android.build.gradle.BaseExtension).compileOptions {
-      sourceCompatibility = JavaVersion.VERSION_1_8
-      targetCompatibility = JavaVersion.VERSION_1_8
-    }
-  }
-
-  plugins.withType(org.gradle.api.plugins.JavaPlugin::class.java) {
-    extensions.configure(JavaPluginExtension::class.java) {
-      sourceCompatibility = JavaVersion.VERSION_1_8
-      targetCompatibility = JavaVersion.VERSION_1_8
-    }
-  }
-
-  tasks.withType<KotlinCompile> {
-    kotlinOptions {
-      // Gradle forces 1.3.72 for the time being so compile against 1.3 stdlib for the time being
-      // See https://issuetracker.google.com/issues/166582569
-      apiVersion = "1.3"
-      jvmTarget = JavaVersion.VERSION_1_8.toString()
-      freeCompilerArgs += "-Xopt-in=kotlin.RequiresOptIn"
-    }
-  }
-
-  tasks.withType<Test> {
-    testLogging {
-      exceptionFormat = TestExceptionFormat.FULL
-    }
-  }
-
-  this.apply(plugin = "maven-publish")
-  this.apply(plugin = "signing")
-
-  repositories {
-    google()
-    mavenCentral()
-    jcenter {
-      content {
-        includeGroup("org.jetbrains.trove4j")
-      }
-    }
-  }
-
-  group = property("GROUP")!!
-  version = property("VERSION_NAME")!!
-
-  apply(plugin = "checkstyle")
-
-  extensions.findByType(CheckstyleExtension::class.java)!!.apply {
-    configFile = rootProject.file("checkstyle.xml")
-    configProperties = mapOf(
-        "checkstyle.cache.file" to rootProject.file("build/checkstyle.cache")
-    )
-  }
-
-  tasks.register("checkstyle", Checkstyle::class.java) {
-    source("src/main/java")
-    include("**/*.java")
-    classpath = files()
-  }
-
-  afterEvaluate {
-    tasks.findByName("check")?.dependsOn("checkstyle")
-  }
-
-  tasks.withType<Test>().configureEach {
-    systemProperty("updateTestFixtures", System.getProperty("updateTestFixtures"))
-  }
-
-  afterEvaluate {
-    configurePublishing()
-  }
-}
-
-fun Project.configurePublishing() {
-  val android = extensions.findByType(com.android.build.gradle.BaseExtension::class.java)
-
-  /**
-   * Javadoc
-   */
-  var javadocTask = tasks.findByName("javadoc") as Javadoc?
-  var javadocJarTaskProvider: TaskProvider<org.gradle.jvm.tasks.Jar>? = null
-
-  if (javadocTask == null && android != null) {
-    // create the Android javadoc if needed
-    javadocTask = tasks.create("javadoc", Javadoc::class.java) {
-      source = android.sourceSets["main"].java.sourceFiles
-      classpath += project.files(android.bootClasspath.joinToString(File.pathSeparator))
-
-      (android as? com.android.build.gradle.LibraryExtension)?.libraryVariants?.configureEach {
-        if (name != "release") {
-          return@configureEach
-        }
-        classpath += getCompileClasspath(null)
-      }
-    }
-  }
-
-  javadocJarTaskProvider = tasks.register("javadocJar", org.gradle.jvm.tasks.Jar::class.java) {
-    archiveClassifier.set("javadoc")
-    if (javadocTask != null) {
-      dependsOn(javadocTask)
-      from(javadocTask.destinationDir)
-    }
-  }
-
-  val javaPluginConvention = project.convention.findPlugin(JavaPluginConvention::class.java)
-  val sourcesJarTaskProvider = tasks.register("sourcesJar", org.gradle.jvm.tasks.Jar::class.java) {
-    archiveClassifier.set("sources")
-    when {
-      javaPluginConvention != null && android == null -> {
-        from(javaPluginConvention.sourceSets.get("main").allSource)
-      }
-      android != null -> {
-        from(android.sourceSets["main"].java.sourceFiles)
-      }
-    }
-  }
-
-  tasks.withType(Javadoc::class.java) {
-    // TODO: fix the javadoc warnings
-    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:none", "-quiet")
-  }
-
-  tasks.withType(Jar::class.java) {
-      manifest {
-        attributes["Built-By"] = findProperty("POM_DEVELOPER_ID") as String?
-        attributes["Build-Jdk"] = "${System.getProperty("java.version")} (${System.getProperty("java.vendor")} ${System.getProperty("java.vm.version")})"
-        attributes["Build-Timestamp"] = java.time.Instant.now().toString()
-        attributes["Created-By"] = "Gradle ${gradle.gradleVersion}"
-        attributes["Implementation-Title"] = findProperty("POM_NAME") as String?
-        attributes["Implementation-Version"] = findProperty("VERSION_NAME") as String?
-      }
-  }
-
-  configure<PublishingExtension> {
-    publications {
-      when {
-        plugins.hasPlugin("org.jetbrains.kotlin.multiplatform") -> {
-          withType<MavenPublication> {
-            // multiplatform doesn't add javadoc by default so add it here
-            artifact(javadocJarTaskProvider.get())
-            if (name == "kotlinMultiplatform") {
-              // sources are added for each platform but not for the common module
-              artifact(sourcesJarTaskProvider.get())
-            }
-          }
-        }
-        plugins.hasPlugin("java-gradle-plugin") -> {
-          // java-gradle-plugin doesn't add javadoc/sources by default so add it here
-          withType<MavenPublication> {
-            artifact(javadocJarTaskProvider.get())
-            artifact(sourcesJarTaskProvider.get())
-          }
-        }
-        else -> {
-          create<MavenPublication>("default") {
-            val javaComponent = components.findByName("java")
-            if (javaComponent != null) {
-              from(javaComponent)
-            } else if (android != null) {
-              afterEvaluate {
-                from(components.findByName("release"))
-              }
-            }
-
-            artifact(javadocJarTaskProvider.get())
-            artifact(sourcesJarTaskProvider.get())
-
-            pom {
-              artifactId = findProperty("POM_ARTIFACT_ID") as String?
-            }
-          }
-        }
-      }
-
-      withType<MavenPublication> {
-        setDefaultPomFields(this)
-      }
-    }
-
-    repositories {
-      maven {
-        name = "pluginTest"
-        url = uri("file://${rootProject.buildDir}/localMaven")
-      }
-
-      maven {
-        name = "bintray"
-        url = uri("https://api.bintray.com/maven/apollographql/android/apollo/;override=1")
-        credentials {
-          username = System.getenv("BINTRAY_USER")
-          password = System.getenv("BINTRAY_API_KEY")
-        }
-      }
-
-      maven {
-        name = "ojo"
-        url = uri("https://oss.jfrog.org/artifactory/oss-snapshot-local/")
-        credentials {
-          username = System.getenv("BINTRAY_USER")
-          password = System.getenv("BINTRAY_API_KEY")
-        }
-      }
-
-      maven {
-        name = "ossSnapshots"
-        url = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-        credentials {
-          username = System.getenv("SONATYPE_NEXUS_USERNAME")
-          password = System.getenv("SONATYPE_NEXUS_PASSWORD")
-        }
-      }
-
-      maven {
-        name = "ossStaging"
-        url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-        credentials {
-          username = System.getenv("SONATYPE_NEXUS_USERNAME")
-          password = System.getenv("SONATYPE_NEXUS_PASSWORD")
-        }
-      }
-    }
-  }
-
-  configure<SigningExtension> {
-    // GPG_PRIVATE_KEY should contain the armoured private key that starts with -----BEGIN PGP PRIVATE KEY BLOCK-----
-    // It can be obtained with gpg --armour --export-secret-keys KEY_ID
-    useInMemoryPgpKeys(System.getenv("GPG_PRIVATE_KEY"), System.getenv("GPG_PRIVATE_KEY_PASSWORD"))
-    val publicationsContainer = (extensions.get("publishing") as PublishingExtension).publications
-    sign(publicationsContainer)
-  }
-  tasks.withType<Sign> {
-    isEnabled = !System.getenv("GPG_PRIVATE_KEY").isNullOrBlank()
-  }
-}
-
-/**
- * Set fields which are common to all project, either KMP or non-KMP
- */
-fun Project.setDefaultPomFields(mavenPublication: MavenPublication) {
-  mavenPublication.groupId = findProperty("GROUP") as String?
-  mavenPublication.version = findProperty("VERSION_NAME") as String?
-
-  mavenPublication.pom {
-    name.set(findProperty("POM_NAME") as String?)
-    (findProperty("POM_PACKAGING") as String?)?.let {
-      // Do not overwrite packaging if set by the multiplatform plugin
-      packaging = it
-    }
-
-    description.set(findProperty("POM_DESCRIPTION") as String?)
-    url.set(findProperty("POM_URL") as String?)
-
-    scm {
-      url.set(findProperty("POM_SCM_URL") as String?)
-      connection.set(findProperty("POM_SCM_CONNECTION") as String?)
-      developerConnection.set(findProperty("POM_SCM_DEV_CONNECTION") as String?)
-    }
-
-    licenses {
-      license {
-        name.set(findProperty("POM_LICENCE_NAME") as String?)
-        url.set(findProperty("POM_LICENCE_URL") as String?)
-      }
-    }
-
-    developers {
-      developer {
-        id.set(findProperty("POM_DEVELOPER_ID") as String?)
-        name.set(findProperty("POM_DEVELOPER_NAME") as String?)
-      }
-    }
-  }
-}
+version = property("VERSION_NAME")!!
 
 fun subprojectTasks(name: String): List<Task> {
   return subprojects.flatMap { subproject ->
@@ -306,79 +23,146 @@ fun isTag(): Boolean {
   return ref?.startsWith("refs/tags/") == true
 }
 
-fun isMain(): Boolean {
+fun shouldPublishSnapshots(): Boolean {
   val eventName = System.getenv("GITHUB_EVENT_NAME")
   val ref = System.getenv("GITHUB_REF")
 
-  return eventName == "push" && ref == "refs/heads/main"
+  return eventName == "push" && (ref == "refs/heads/main")
 }
 
-tasks.register("publishSnapshotsIfNeeded") {
-  if (isMain()) {
-    project.logger.log(LogLevel.LIFECYCLE, "Deploying snapshot to OJO...")
-    dependsOn(subprojectTasks("publishAllPublicationsToOjoRepository"))
-    project.logger.log(LogLevel.LIFECYCLE, "Deploying snapshot to OSS Snapshots...")
+tasks.register("ciPublishSnapshot") {
+  description = "Publishes a SNAPSHOT"
+
+  if (shouldPublishSnapshots()) {
     dependsOn(subprojectTasks("publishAllPublicationsToOssSnapshotsRepository"))
-  }
-}
-
-tasks.register("publishToBintrayIfNeeded") {
-  if (isTag()) {
-    project.logger.log(LogLevel.LIFECYCLE, "Deploying release to Bintray...")
-    dependsOn(subprojectTasks("publishAllPublicationsToBintrayRepository"))
-  }
-}
-
-tasks.register("publishToOssStagingIfNeeded") {
-  if (isTag()) {
-    project.logger.log(LogLevel.LIFECYCLE, "Deploying release to OSS staging...")
-    dependsOn(subprojectTasks("publishAllPublicationsToOssStagingRepository"))
-  }
-}
-
-tasks.register("publishToGradlePortalIfNeeded") {
-  if (isTag()) {
-    project.logger.log(LogLevel.LIFECYCLE, "Deploying release to Gradle Portal...")
-    dependsOn(":apollo-gradle-plugin:publishPlugins")
-  }
-}
-
-tasks.register("sonatypeCloseAndReleaseRepository") {
-  doLast {
-    com.vanniktech.maven.publish.nexus.Nexus(
-        username = System.getenv("SONATYPE_NEXUS_USERNAME"),
-        password = System.getenv("SONATYPE_NEXUS_PASSWORD"),
-        baseUrl = "https://oss.sonatype.org/service/local/",
-        groupId = "com.apollographql"
-    ).closeAndReleaseRepository()
-  }
-}
-
-tasks.register("bintrayPublish") {
-  doLast {
-    val version = findProperty("VERSION_NAME") as String?
-    "{\"publish_wait_for_secs\": -1}".toRequestBody("application/json".toMediaType()).let {
-      val credentials = basic(System.getenv("BINTRAY_USER"), System.getenv("BINTRAY_API_KEY"))
-      Request.Builder()
-          .post(it)
-          .header("Authorization", credentials)
-          .url("https://api.bintray.com/content/apollographql/android/apollo/$version/publish")
-          .build()
-    }.let {
-      /**
-       * Do the actual publishing with increased timeouts because the API might take a long time to reply
-       * If it times out, the files are published but apparently not the version. Making the call again seems to fix it
-       */
-      okhttp3.OkHttpClient.Builder()
-              .readTimeout(1, TimeUnit.HOURS)
-              .build()
-              .newCall(it)
-              .execute()
-    }.use {
-      check(it.isSuccessful) {
-        "Cannot publish to bintray: ${it.code}\n: ${it.body?.string()}"
-      }
+  } else {
+    doFirst {
+      error("We are not on a branch, fail snapshots publishing")
     }
   }
 }
 
+
+tasks.register("ciPublishRelease") {
+  description = "Publishes all artifacts to OSSRH and the Gradle Plugin Portal"
+
+  if (isTag()) {
+    dependsOn(subprojectTasks("publishAllPublicationsToOssStagingRepository"))
+    // Only publish plugins to the Gradle portal if everything else succeeded
+    finalizedBy(":apollo-gradle-plugin:publishPlugins")
+  } else {
+    doFirst {
+      error("We are not on a tag, fail release publishing")
+    }
+  }
+
+}
+
+tasks.register("ciTestsGradle") {
+  description = "Execute the Gradle tests (slow)"
+  dependsOn(":apollo-gradle-plugin:allTests")
+  dependsOn(":apollo-gradle-plugin-external:validatePlugins")
+}
+
+tasks.register("ciTestsNoGradle") {
+  description = """Execute all tests from the root project except: 
+    | - the Gradle ones
+    | - most of the Apple tests. Instead it just executes macosX64 tests to save time
+    | - the IntelliJ plugin tests - they are run in a dedicated job
+  """.trimMargin()
+
+
+  subprojects {
+    if (name !in setOf("apollo-gradle-plugin", "intellij-plugin")) {
+      dependsOn(tasks.matching { it.name == "test" })
+    }
+    dependsOn(tasks.matching { it.name == "jvmTest" })
+    dependsOn(tasks.matching { it.name == "jsNodeTest" })
+    dependsOn(tasks.withType(KotlinNativeHostTest::class.java))
+    dependsOn(tasks.matching { it.name == "apiCheck" })
+    dependsOn(tasks.matching { it.name == "licensee" })
+  }
+
+  /**
+   * Update the database schemas in CI
+   */
+  dependsOn(":apollo-normalized-cache-sqlite:generateCommonMainJsonDatabaseSchema")
+
+  doLast {
+    if (isCIBuild()) {
+      checkGitStatus()
+    }
+  }
+}
+
+/**
+ * Shorthands for less typing during development
+ */
+tasks.register("ctng") {
+  dependsOn("ciTestsNoGradle")
+}
+tasks.register("ctg") {
+  dependsOn("ciTestsGradle")
+}
+
+val ciBuild = tasks.register("ciBuild") {
+  description = "Execute the 'build' task in each subproject"
+  dependsOn(subprojectTasks("build"))
+}
+
+tasks.named("dependencyUpdates").configure {
+  (this as com.github.benmanes.gradle.versions.updates.DependencyUpdatesTask)
+  rejectVersionIf {
+    listOf("alpha", "beta", "rc").any { candidate.version.lowercase().contains(it) }
+  }
+}
+
+rootProject.configureNode()
+rootProject.configureJapiCmp()
+
+configure<kotlinx.validation.ApiValidationExtension> {
+  @OptIn(ExperimentalBCVApi::class)
+  klib.enabled = true
+
+  ignoredPackages.addAll(
+      listOf(
+          /**
+           * In general, we rely on annotations or "internal" visibility to hide the non-public APIs. But there are a few exceptions:
+           *
+           * Gradle plugin: tasks and other classes must be public in order for Gradle to instantiate and decorate them.
+           * SQLDelight generated sources are not generated as 'internal'.
+           */
+          "com.apollographql.apollo.gradle.internal",
+          "com.apollographql.apollo.cache.normalized.sql.internal",
+          "com.apollographql.apollo.runtime.java.internal",
+          "com.apollographql.apollo.runtime.java.interceptor.internal",
+          "com.apollographql.apollo.runtime.java.network.http.internal",
+      )
+  )
+
+  ignoredProjects.add("intellij-plugin")
+
+  nonPublicMarkers.addAll(
+      listOf(
+          "com.apollographql.apollo.annotations.ApolloInternal",
+          "com.apollographql.apollo.annotations.ApolloExperimental",
+      )
+  )
+}
+
+tasks.register("rmbuild") {
+  val root = file(".")
+  doLast {
+    root.walk().onEnter {
+      if (it.isDirectory && it.name == "build") {
+        println("deleting: $it")
+        it.deleteRecursively()
+        false
+      } else {
+        true
+      }
+    }.count()
+  }
+}
+
+apolloRoot(ciBuild)
